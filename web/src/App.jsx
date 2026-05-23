@@ -1,6 +1,7 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 const API = 'http://localhost:3000';
+const AGENT = 'http://localhost:3001';
 
 export default function App() {
   const [movies, setMovies] = useState([]);
@@ -8,6 +9,50 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [form, setForm] = useState({ title: '', director: '', year: '', rating: '' });
+
+  // Chat state
+  const [chatHistory, setChatHistory] = useState([]); // [{role: 'user'|'assistant', text, trace?}]
+  const [chatInput, setChatInput] = useState('');
+  const [chatBusy, setChatBusy] = useState(false);
+  const [chatError, setChatError] = useState(null);
+  const chatEndRef = useRef(null);
+
+  async function sendChat(e) {
+    e.preventDefault();
+    const userText = chatInput.trim();
+    if (!userText || chatBusy) return;
+
+    setChatError(null);
+    setChatBusy(true);
+    setChatInput('');
+
+    const newHistory = [...chatHistory, { role: 'user', text: userText }];
+    setChatHistory(newHistory);
+
+    try {
+      const messages = newHistory.map((m) => ({ role: m.role, content: m.text }));
+      const res = await fetch(`${AGENT}/chat`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ messages }),
+      });
+      const body = await res.json();
+      if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`);
+      setChatHistory([
+        ...newHistory,
+        { role: 'assistant', text: body.reply, trace: body.trace ?? [] },
+      ]);
+      load(yearFilter); // refresh table in case the agent modified data
+    } catch (e) {
+      setChatError(e.message);
+    } finally {
+      setChatBusy(false);
+    }
+  }
+
+  useEffect(() => {
+    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [chatHistory, chatBusy]);
 
   async function load(year) {
     setLoading(true);
@@ -157,6 +202,52 @@ export default function App() {
             onChange={(e) => setForm({ ...form, rating: e.target.value })}
           />
           <button type="submit">Add</button>
+        </form>
+      </section>
+
+      <section className="chat">
+        <h2>Chat with the catalog</h2>
+        <p className="hint">
+          Ask in natural language. The agent calls the same API as the table above.
+        </p>
+        <div className="chat-log">
+          {chatHistory.length === 0 && (
+            <p className="empty">
+              Try: <em>"What movies from 2019 do we have?"</em> or{' '}
+              <em>"Add Interstellar (2014) directed by Christopher Nolan, rating 8.6."</em>
+            </p>
+          )}
+          {chatHistory.map((msg, i) => (
+            <div key={i} className={`msg msg-${msg.role}`}>
+              <div className="msg-role">{msg.role === 'user' ? 'You' : 'Claude'}</div>
+              <div className="msg-text">{msg.text || <em>(no text)</em>}</div>
+              {msg.trace && msg.trace.length > 0 && (
+                <details className="trace">
+                  <summary>{msg.trace.length} tool call{msg.trace.length === 1 ? '' : 's'}</summary>
+                  {msg.trace.map((t, j) => (
+                    <pre key={j}>
+                      → {t.name}({JSON.stringify(t.input)}){'\n'}
+                      ← {JSON.stringify(t.output).slice(0, 400)}
+                    </pre>
+                  ))}
+                </details>
+              )}
+            </div>
+          ))}
+          {chatBusy && <div className="msg msg-assistant"><em>thinking…</em></div>}
+          <div ref={chatEndRef} />
+        </div>
+        {chatError && <div className="error">Error: {chatError}</div>}
+        <form onSubmit={sendChat} className="chat-input">
+          <input
+            placeholder="Ask about movies…"
+            value={chatInput}
+            onChange={(e) => setChatInput(e.target.value)}
+            disabled={chatBusy}
+          />
+          <button type="submit" disabled={chatBusy || !chatInput.trim()}>
+            Send
+          </button>
         </form>
       </section>
     </main>
