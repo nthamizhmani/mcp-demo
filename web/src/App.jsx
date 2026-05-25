@@ -3,6 +3,15 @@ import { useEffect, useRef, useState } from 'react';
 const API = 'http://localhost:3000';
 const AGENT = 'http://localhost:3001';
 
+function formatLlmLabel(name) {
+  if (!name) return 'Assistant';
+  if (/^claude/i.test(name)) return 'Claude';
+  const ollama = name.match(/^ollama\s*\(([^)]+)\)/i);
+  if (ollama) return `Ollama (${ollama[1]})`;
+  if (/^ollama/i.test(name)) return 'Ollama';
+  return name;
+}
+
 export default function App() {
   const [movies, setMovies] = useState([]);
   const [yearFilter, setYearFilter] = useState('');
@@ -15,6 +24,8 @@ export default function App() {
   const [chatInput, setChatInput] = useState('');
   const [chatBusy, setChatBusy] = useState(false);
   const [chatError, setChatError] = useState(null);
+  const [assistantLabel, setAssistantLabel] = useState('Assistant');
+  const [chatOpen, setChatOpen] = useState(false);
   const chatEndRef = useRef(null);
 
   async function sendChat(e) {
@@ -71,6 +82,12 @@ export default function App() {
 
   useEffect(() => {
     load();
+    fetch(`${AGENT}/health`)
+      .then((r) => r.json())
+      .then((h) => {
+        if (h?.llm) setAssistantLabel(formatLlmLabel(h.llm));
+      })
+      .catch(() => {});
   }, []);
 
   async function addMovie(e) {
@@ -110,6 +127,7 @@ export default function App() {
   }
 
   return (
+    <>
     <main>
       <h1>Movies</h1>
       <p className="subtitle">Data served from <code>http://localhost:3000</code></p>
@@ -205,51 +223,79 @@ export default function App() {
         </form>
       </section>
 
-      <section className="chat">
-        <h2>Chat with the catalog</h2>
-        <p className="hint">
-          Ask in natural language. The agent calls the same API as the table above.
-        </p>
-        <div className="chat-log">
-          {chatHistory.length === 0 && (
-            <p className="empty">
-              Try: <em>"What movies from 2019 do we have?"</em> or{' '}
-              <em>"Add Interstellar (2014) directed by Christopher Nolan, rating 8.6."</em>
-            </p>
-          )}
-          {chatHistory.map((msg, i) => (
-            <div key={i} className={`msg msg-${msg.role}`}>
-              <div className="msg-role">{msg.role === 'user' ? 'You' : 'Claude'}</div>
-              <div className="msg-text">{msg.text || <em>(no text)</em>}</div>
-              {msg.trace && msg.trace.length > 0 && (
-                <details className="trace">
-                  <summary>{msg.trace.length} tool call{msg.trace.length === 1 ? '' : 's'}</summary>
-                  {msg.trace.map((t, j) => (
-                    <pre key={j}>
-                      → {t.name}({JSON.stringify(t.input)}){'\n'}
-                      ← {JSON.stringify(t.output).slice(0, 400)}
-                    </pre>
-                  ))}
-                </details>
-              )}
-            </div>
-          ))}
-          {chatBusy && <div className="msg msg-assistant"><em>thinking…</em></div>}
-          <div ref={chatEndRef} />
-        </div>
-        {chatError && <div className="error">Error: {chatError}</div>}
-        <form onSubmit={sendChat} className="chat-input">
-          <input
-            placeholder="Ask about movies…"
-            value={chatInput}
-            onChange={(e) => setChatInput(e.target.value)}
-            disabled={chatBusy}
-          />
-          <button type="submit" disabled={chatBusy || !chatInput.trim()}>
-            Send
-          </button>
-        </form>
-      </section>
     </main>
+    <div className={`chat-widget ${chatOpen ? 'open' : ''}`}>
+      {chatOpen && (
+        <div className="chat-panel" role="dialog" aria-label="Chat">
+          <header className="chat-header">
+            <div>
+              <div className="chat-title">Catalog assistant</div>
+              <div className="chat-subtitle">{assistantLabel}</div>
+            </div>
+            <button
+              className="chat-close"
+              aria-label="Close chat"
+              onClick={() => setChatOpen(false)}
+            >
+              ×
+            </button>
+          </header>
+          <div className="chat-log">
+            {chatHistory.length === 0 && (
+              <p className="empty">
+                Ask in natural language. Try:{' '}
+                <em>"What movies from 2019 do we have?"</em>
+              </p>
+            )}
+            {chatHistory.map((msg, i) => (
+              <div key={i} className={`msg msg-${msg.role}`}>
+                <div className="msg-role">{msg.role === 'user' ? 'You' : assistantLabel}</div>
+                <div className="msg-text">{msg.text || <em>(no text)</em>}</div>
+                {msg.trace && msg.trace.length > 0 && (
+                  <details className="trace">
+                    <summary>
+                      {msg.trace.length} tool call{msg.trace.length === 1 ? '' : 's'}
+                    </summary>
+                    {msg.trace.map((t, j) => (
+                      <pre key={j}>
+                        → {t.name}({JSON.stringify(t.input)}){'\n'}
+                        ← {JSON.stringify(t.output).slice(0, 400)}
+                      </pre>
+                    ))}
+                  </details>
+                )}
+              </div>
+            ))}
+            {chatBusy && (
+              <div className="msg msg-assistant">
+                <em>thinking…</em>
+              </div>
+            )}
+            <div ref={chatEndRef} />
+          </div>
+          {chatError && <div className="error">Error: {chatError}</div>}
+          <form onSubmit={sendChat} className="chat-input">
+            <input
+              placeholder="Ask about movies…"
+              value={chatInput}
+              onChange={(e) => setChatInput(e.target.value)}
+              disabled={chatBusy}
+              autoFocus
+            />
+            <button type="submit" disabled={chatBusy || !chatInput.trim()}>
+              Send
+            </button>
+          </form>
+        </div>
+      )}
+      <button
+        className="chat-launcher"
+        aria-label={chatOpen ? 'Close chat' : 'Open chat'}
+        onClick={() => setChatOpen((o) => !o)}
+      >
+        {chatOpen ? '×' : '💬'}
+      </button>
+    </div>
+    </>
   );
 }
